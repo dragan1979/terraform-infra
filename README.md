@@ -4,7 +4,7 @@ This repository contains the **Infrastructure as Code (IaC)** and **GitHub Actio
 
 ---
 
-## 🏗️ Architecture Design
+##  Architecture Design
 
 The platform is built on a modular hub-and-spoke networking model designed for security and high availability.
 
@@ -17,7 +17,7 @@ The platform is built on a modular hub-and-spoke networking model designed for s
 
 ---
 
-## 📂 Project Structure
+##  Project Structure
 
 ```text
 ├── .github/workflows/           # CI/CD Pipeline Definitions
@@ -25,7 +25,7 @@ The platform is built on a modular hub-and-spoke networking model designed for s
 │   ├── terraform-apply-dev.yaml # Automated deployment to Dev
 │   ├── terraform-plan-prod.yaml # Security scan & Plan for Prod
 │   ├── terraform-apply-prod.yaml# Automated deployment to Prod
-│   └── runner-bootstrap.yaml    # K8s addons (ArgoCD, Traefik, etc.)
+│   
 ├── terraform/
 │   ├── environments/            # Environment-specific entry points
 │   │   ├── dev/                 # Development (swedencentral)
@@ -38,12 +38,13 @@ The platform is built on a modular hub-and-spoke networking model designed for s
 │       ├── keyvault/            # Secure Secret Management
 │       ├── database/            # PostgreSQL Flexible Server
 │       ├── vm/                  # CI/CD Runners & Jumpboxes
+        |    | -- scripts/runner-bootstrap.yaml    # K8s addons (ArgoCD, Traefik, etc.)     
 │       └── bastion/             # Secure PaaS Management Access
 ```
 
 ---
 
-## 🚀 Environment Specifications
+## Environment Specifications
 
 The infrastructure supports distinct configurations per environment to optimize for cost and performance.
 
@@ -57,9 +58,9 @@ The infrastructure supports distinct configurations per environment to optimize 
 
 ---
 
-## 🛠️ Key Infrastructure Modules
+## Key Infrastructure Modules
 
-### 🌐 NAT Gateway (Outbound Security)
+### NAT Gateway (Outbound Security)
 
 The `nat-gateway` module ensures all private resources have secure, controlled outbound access:
 
@@ -67,7 +68,7 @@ The `nat-gateway` module ensures all private resources have secure, controlled o
 - **Subnet Association**: Connected directly to the AKS Subnet and CI/CD VM Subnet.
 - **Secure Access**: Allows private resources to reach external APIs or download updates without being exposed to inbound internet threats.
 
-### 🤖 CI/CD Runner Bootstrapping
+### CI/CD Runner Bootstrapping
 
 Self-hosted runners are automatically provisioned and configured using a `bootstrap.sh` script:
 
@@ -76,7 +77,7 @@ Self-hosted runners are automatically provisioned and configured using a `bootst
 - **Management Tools**: Installs `kubectl`, `helm`, and Azure CLI to manage cloud resources.
 - **Runner Lifecycle**: Downloads and sets up the GitHub Actions runner binary under a dedicated `gh-runner` user.
 
-### ☸️ Kubernetes GitOps & Bootstrapping
+### Kubernetes GitOps & Bootstrapping
 
 After the cluster is provisioned, the `runner-bootstrap` workflow installs core services via Helm:
 
@@ -87,7 +88,7 @@ After the cluster is provisioned, the `runner-bootstrap` workflow installs core 
 
 ---
 
-## 🔐 Security Protocols
+## Security Protocols
 
 ### Workload Identity
 
