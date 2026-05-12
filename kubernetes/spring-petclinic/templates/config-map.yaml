@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: petclinic-config
+  labels:
+    {{- include "spring-petclinic.labels" . | nindent 4 }}
+data:
+{{- /* This pulls ALL files from the 'config' folder and injects them here! */ -}}
+{{ (.Files.Glob "config/*").AsConfig | nindent 2 }}

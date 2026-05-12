@@ -1,0 +1,277 @@
+{{- /*
+EXPLANATION OF THE MERGE FUNCTION VS. DEFAULT FUNCTION:
+
+1. The limits of 'default' (The "Either/Or" Bouncer)
+   If you use 'default', Helm looks at your service's probe and says:
+   - "Is this completely empty? Yes? I will use the Global one."
+   - "Does this have even a single line of code? Yes? Then I will 
+      throw the Global one in the trash and ONLY use yours."
+   It refuses to mix them together, which leaves missing fields blank.
+
+2. The power of 'merge' (The "Mixer")
+   The 'merge' function aggressively mashes two dictionaries together 
+   into one single, complete dictionary. This enables Partial Overrides!
+
+3. Order of Precedence
+   The FIRST dictionary you list wins any tie-breakers. 
+   When Helm runs: merge ($service.livenessProbe) ($.Values.global.livenessProbe)
+   
+   - Dict A (Service Override): [ initialDelaySeconds: 20 ]
+   - Dict B (Global Fallback):  [ initialDelaySeconds: 40, timeoutSeconds: 5 ]
+   
+   Helm keeps the 20 seconds from Dict A. Since Dict A is missing 
+   the timeout, it borrows it from Dict B to fill in the gaps.
+   
+   - Result: [ initialDelaySeconds: 20, timeoutSeconds: 5 ]
+   {{- $mysql := .Values.global.mysql | default dict }}, you are telling Helm:
+
+"Go fetch the global.mysql block from the values file. If the developer completely deleted that block, 
+# don't panic and return nil. Instead, silently replace it with an empty dictionary {} and save that into the 
+# $mysql variable."
+
+*/ -}}
+
+{{- /* ========================================== */ -}}
+{{- /* 1. PRE-FLIGHT VALIDATIONS                  */ -}}
+{{- /* ========================================== */ -}}
+
+{{- range $name, $service := .Values.services }}
+{{- if $n := required "A valid service name is required" $name }}{{- end }}
+{{- end }}
+
+
+{{- /* ========================================== */ -}}
+{{- /* THE MYSQL STATEFULSET            */ -}}
+{{- /* ========================================== */ -}}
+
+{{- range $name, $service := .Values.services }}
+{{- if eq $name "mysql" }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "spring-petclinic.labels" $ | nindent 4 }}
+spec:
+  serviceName: {{ $name }}
+  {{- /* Set a variable that chooses number of replicas OR the global default */ -}}
+  {{- $replicas := default $.Values.global.replicas $service.replicas }}
+  replicas: {{ $replicas }}
+  selector:
+    matchLabels:
+      app: {{ $name }}
+  template:
+    metadata:
+      labels:
+        app: {{ $name }}
+    spec:
+      containers:
+      - name: {{ $name }}
+        image: mysql:8.0
+         {{- $pullPolicy := default $.Values.global.imagePullPolicy $service.imagePullPolicy }}
+        imagePullPolicy: {{ $pullPolicy }}
+        {{- /* Set a variable that chooses either the specific resource OR the global default */ -}}
+        {{- $res := default $.Values.global.defaultResources $service.resources }}
+        resources:
+          requests:
+           cpu: {{ $res.requests.cpu }}
+           memory: {{ $res.requests.memory }}
+          limits:
+           cpu: {{ $res.limits.cpu }}
+           memory: {{ $res.limits.memory }}
+        {{- /* Merge the service probe with the global probe, falling back to an empty dict if the service probe doesn't exist */ -}}
+        {{- $livenes := merge ($service.livenessProbe | default dict) $.Values.global.livenessProbe }}
+        livenessProbe:
+          exec:
+            command:
+             - sh
+             - -c
+             - "mysqladmin ping -h localhost -u root -p${MYSQL_ROOT_PASSWORD} || exit 1"
+          initialDelaySeconds: {{ $livenes.initialDelaySeconds }}
+          timeoutSeconds: {{ $livenes.timeoutSeconds }}
+          periodSeconds: {{ $livenes.periodSeconds }}
+          successThreshold: {{ $livenes.successThreshold }}
+          failureThreshold: {{ $livenes.failureThreshold }}
+        {{- $readiness := merge ($service.readinessProbe | default dict) $.Values.global.readinessProbe }}
+        readinessProbe:
+          exec: 
+            command:
+             - sh
+             - -c
+             - "mysql -u root -p${MYSQL_ROOT_PASSWORD} -e 'USE petclinic; SELECT 1;' || exit 1"
+          initialDelaySeconds: {{ $readiness.initialDelaySeconds }}
+          timeoutSeconds: {{ $readiness.timeoutSeconds }}
+          periodSeconds: {{ $readiness.periodSeconds }}
+          successThreshold: {{ $readiness.successThreshold }}
+          failureThreshold: {{ $readiness.failureThreshold }}
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secrets
+              key: root-pass
+        - name: MYSQL_DATABASE
+          value: "petclinic"
+        - name: MYSQL_USER
+          value: "petclinic"
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef: 
+              name: mysql-secrets
+              key: user-pass
+        ports:
+        - containerPort: {{$service.port}}
+        volumeMounts:
+        - name: mysql-data
+          mountPath: /var/lib/mysql
+  volumeClaimTemplates:
+  - metadata:
+      name: mysql-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: {{ $service.storage | default "10Gi" }}
+
+{{- /* ========================================== */ -}}
+{{- /* THE SPRING BOOT DEPLOYMENTS                */ -}}
+{{- /* ========================================== */ -}}
+{{- else }}
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    {{- include "spring-petclinic.labels" $ | nindent 4 }}
+  name: {{ $name }}
+spec:
+  {{- /* Set a variable that chooses number of replicas OR the global default */ -}}
+  {{- $replicas := default $.Values.global.replicas $service.replicas }}
+  replicas: {{ $replicas }}
+  selector:
+    matchLabels:
+      app: {{ $name }}
+  template:
+    metadata:
+      labels:
+        app: {{ $name }}
+    spec:
+      {{- /* ONLY add InitContainer for services that need the MYSQL DB */ -}}
+      {{- if or (eq $name "customers-service") (eq $name "vets-service") (eq $name "visits-service") }}
+      initContainers:
+      - name: wait-for-mysql
+        image: busybox
+        env:
+        - name: K8S_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        command:
+          - sh
+          - -c 
+          - |
+            until nc -vz mysql.$(K8S_NAMESPACE).svc.cluster.local 3306; do
+              echo "Waiting for MySQL to be ready..."
+              sleep 5
+            done
+      {{- end }}
+      containers:
+      - name: {{ $name }}
+      {{ $tag :=default $.Values.global.imageTag $service.imageTag }}
+        image: dragan979/spring-petclinic-microservices-{{ $name }}:{{ $tag }}
+        {{- $pullPolicy := default $.Values.global.imagePullPolicy $service.imagePullPolicy }}
+        imagePullPolicy: {{ $pullPolicy }}
+        ports:
+        - containerPort: {{ $service.port }}
+        env:
+        - name: K8S_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace # This pulls the actual namespace name
+        {{- if ne $name "config-server" }}
+        - name: SPRING_CONFIG_IMPORT
+          value: "configserver:http://config-server.$(K8S_NAMESPACE).svc.cluster.local:8888"
+        {{- end }}
+        {{- if eq $name "config-server" }}
+        - name: SPRING_PROFILES_ACTIVE
+          value: "native"
+        - name: SPRING_CONFIG_SERVER_PORT
+          value: "8888"
+        - name: SPRING_CLOUD_CONFIG_SERVER_NATIVE_SEARCH_LOCATIONS
+          value: "file:/app/shared-config"
+        {{- else if eq $name "discovery-server" }}
+        - name: SPRING_PROFILES_ACTIVE
+          value: "docker"
+        - name: EUREKA_CLIENT_SERVICEURL_DEFAULTZONE
+          value: "http://discovery-server.$(K8S_NAMESPACE).svc.cluster.local:8761/eureka/"
+        {{- else if or (eq $name "customers-service") (eq $name "vets-service") (eq $name "visits-service") }}
+          # --- DATABASE VARIABLES ---
+        - name: SPRING_PROFILES_ACTIVE
+          value: "docker,mysql"
+        - name: SPRING_DATASOURCE_URL
+          value: "jdbc:mysql://mysql.$(K8S_NAMESPACE).svc.cluster.local:3306/{{ $.Values.global.database }}"
+        - name: SPRING_DATASOURCE_USERNAME
+          value: "{{ $.Values.global.databaseuser }}"
+        - name: SPRING_DATASOURCE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secrets
+              key: user-pass
+        {{- else }}
+        - name: SPRING_PROFILES_ACTIVE
+          value: "docker"
+        {{- end }}
+        {{- if eq $name "config-server" }}
+        # --- CONFIG SERVER VOLUME MOUNT ---
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/shared-config
+        {{- end }}
+        {{- /* Merge the service probe with the global probe, falling back to an empty dict if the service probe doesn't exist */ -}}
+        {{- $livenes := merge ($service.livenessProbe | default dict) $.Values.global.livenessProbe }}
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: {{ $service.port }}
+          initialDelaySeconds: {{ $livenes.initialDelaySeconds }}
+          timeoutSeconds: {{ $livenes.timeoutSeconds }}
+          periodSeconds: {{ $livenes.periodSeconds }}
+          successThreshold: {{ $livenes.successThreshold }}
+          failureThreshold: {{ $livenes.failureThreshold }}
+        {{- /* $readiness := default $.Values.global.readinessProbe $service.readinessProbe */}}
+        {{- $readiness := merge ($service.readinessProbe | default dict) $.Values.global.readinessProbe }}
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: {{ $service.port }}
+          initialDelaySeconds: {{ $readiness.initialDelaySeconds }}
+          timeoutSeconds: {{ $readiness.timeoutSeconds }}
+          periodSeconds: {{ $readiness.periodSeconds }}
+          successThreshold: {{ $readiness.successThreshold }}
+          failureThreshold: {{ $readiness.failureThreshold }}
+        startupProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: {{ $service.port }}
+          failureThreshold: 20
+          periodSeconds: 5
+        {{- /* Set a variable that chooses either the specific resource OR the global default */ -}}
+        {{- $res := default $.Values.global.defaultResources $service.resources }}
+        resources:
+          requests:
+           cpu: {{ $res.requests.cpu }}
+           memory: {{ $res.requests.memory }}
+          limits:
+           cpu: {{ $res.limits.cpu }}
+           memory: {{ $res.limits.memory }}
+      {{- if eq $name "config-server" }}
+      # -- CONFIG SERVER VOLUME DEFINITION ---
+      volumes:
+      - name: config-volume
+        configMap:
+          name: petclinic-config
+      {{- end }}
+{{- end }}
+---
+{{- end }}
+

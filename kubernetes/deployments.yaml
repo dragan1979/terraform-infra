@@ -1,0 +1,562 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+spec:
+  serviceName: mysql
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:8.0
+        resources:
+          requests:
+           cpu: 100m
+           memory: 256Mi
+          limits:
+           cpu: 500m 
+           memory: 512Mi
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          exec:
+            command:
+             - sh
+             - -c
+             - "mysqladmin ping -h localhost -u root -p${MYSQL_ROOT_PASSWORD} || exit 1"
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        readinessProbe:
+          exec: 
+            command:
+             - sh
+             - -c
+             - "mysql -u root -p${MYSQL_ROOT_PASSWORD} -e 'USE petclinic; SELECT 1;' || exit 1"
+          initialDelaySeconds: 5
+          timeoutSeconds: 1
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secrets
+              key: root-pass
+        - name: MYSQL_DATABASE
+          value: "petclinic"
+        - name: MYSQL_USER
+          value: "petclinic"
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef: 
+              name: mysql-secrets
+              key: user-pass
+        ports:
+        - containerPort: 3306
+        volumeMounts:
+        - name: mysql-data
+          mountPath: /var/lib/mysql
+  volumeClaimTemplates:
+  - metadata:
+      name: mysql-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: config-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: config-server
+  template:
+    metadata:
+      labels:
+        app: config-server
+    spec:
+      containers:
+      - name: config-server
+        image: dragan979/spring-petclinic-microservices-config-server:v1
+        ports:
+        - containerPort: 8888
+        env:
+        - name: SPRING_CONFIG_SERVER_PORT
+          value: "8888"
+        - name: SPRING_PROFILES_ACTIVE
+          value: "native"
+        - name: SPRING_CLOUD_CONFIG_SERVER_NATIVE_SEARCH_LOCATIONS
+          value: "file:/app/shared-config"
+        # Mount the "virtual" ConfigMap folder into the container
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/shared-config
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: 8888
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8888
+          initialDelaySeconds: 5
+          timeoutSeconds: 1
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        resources:
+          requests:
+           cpu: 100m
+           memory: 256Mi
+          limits:
+           cpu: 500m 
+           memory: 512Mi
+        imagePullPolicy: IfNotPresent
+
+      volumes:
+      - name: config-volume
+        configMap:
+          name: petclinic-config
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      containers:
+      - name: api-gateway
+        image: dragan979/spring-petclinic-microservices-api-gateway:v1
+        ports:
+        - containerPort: 8080
+        env:
+        - name: K8S_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace # This pulls the actual namespace name
+        - name: SPRING_CONFIG_IMPORT
+          value: "configserver:http://config-server.$(K8S_NAMESPACE).svc.cluster.local:8888"
+        - name: SPRING_PROFILES_ACTIVE
+          value: "docker"
+    
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: 8080
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8080
+          initialDelaySeconds: 5
+          timeoutSeconds: 1
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        resources:
+          requests:
+           cpu: 100m
+           memory: 256Mi
+          limits:
+           cpu: 500m 
+           memory: 512Mi
+        imagePullPolicy: IfNotPresent
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: discovery-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: discovery-server
+  template:
+    metadata:
+      labels:
+        app: discovery-server
+    spec:
+      containers:
+      - name: discovery-server
+        image: dragan979/spring-petclinic-microservices-discovery-server:v1 
+        ports:
+        - containerPort: 8761
+        env:
+        - name: K8S_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace # This pulls the actual namespace name
+        - name: SPRING_CONFIG_IMPORT
+          value: "configserver:http://config-server.$(K8S_NAMESPACE).svc.cluster.local:8888"
+        - name: SPRING_PROFILES_ACTIVE
+          value: "docker"
+        - name: EUREKA_CLIENT_SERVICEURL_DEFAULTZONE
+          value: "http://discovery-server.$(K8S_NAMESPACE).svc.cluster.local:8761/eureka/"
+    
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: 8761
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8761
+          initialDelaySeconds: 5
+          timeoutSeconds: 1
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        resources:
+          requests:
+           cpu: 100m
+           memory: 256Mi
+          limits:
+           cpu: 500m 
+           memory: 512Mi
+        imagePullPolicy: IfNotPresent
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: customers-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: customers-service
+  template:
+    metadata:
+      labels:
+        app: customers-service
+    spec:
+      initContainers:
+      - name: wait-for-mysql
+        image: busybox
+        env:
+        - name: K8S_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        command:
+          - sh
+          - -c 
+          - |
+            until nc -vz mysql.$(K8S_NAMESPACE).svc.cluster.local 3306; do
+              echo "Waiting for MySQL to be ready..."
+              sleep 5
+            done
+      containers:
+      - name: customers-service
+        image: dragan979/spring-petclinic-microservices-customers-service:v1 
+        ports:
+        - containerPort: 8081
+        env:
+        - name: SPRING_ZIPKIN_ENABLED
+          value: "false"
+        - name: K8S_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace # This pulls the actual namespace name
+        - name: SPRING_PROFILES_ACTIVE
+          value: "docker,mysql"
+        - name: SPRING_CONFIG_IMPORT
+          value: "optional:configserver:http://config-server.$(K8S_NAMESPACE).svc.cluster.local:8888/"
+        # Database Connection
+        - name: SPRING_DATASOURCE_URL
+          value: "jdbc:mysql://mysql.$(K8S_NAMESPACE).svc.cluster.local:3306/petclinic"
+        # Database Credentials (from the Secrets we created earlier)
+        - name: SPRING_DATASOURCE_USERNAME
+          value: "petclinic"
+        - name: SPRING_DATASOURCE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secrets
+              key: user-pass
+    
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: 8081
+          initialDelaySeconds: 60
+          timeoutSeconds: 5
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8081
+          initialDelaySeconds: 60
+          timeoutSeconds: 1
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        resources:
+          requests:
+           cpu: 100m
+           memory: 256Mi
+          limits:
+           cpu: 500m 
+           memory: 512Mi
+        imagePullPolicy: IfNotPresent
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vets-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vets-service
+  template:
+    metadata:
+      labels:
+        app: vets-service
+    spec:
+      initContainers:
+      - name: wait-for-mysql
+        image: busybox
+        env:
+        - name: K8S_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        command:
+          - sh
+          - -c 
+          - |
+            until nc -vz mysql.$(K8S_NAMESPACE).svc.cluster.local 3306; do
+              echo "Waiting for MySQL to be ready..."
+              sleep 5
+            done
+      containers:
+      - name: vets-service
+        image: dragan979/spring-petclinic-microservices-vets-service:v1
+        ports:
+        - containerPort: 8083
+        env:
+        - name: K8S_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace # This pulls the actual namespace name
+        - name: SPRING_PROFILES_ACTIVE
+          value: "docker,mysql"
+        - name: SPRING_CONFIG_IMPORT
+          value: "optional:configserver:http://config-server.$(K8S_NAMESPACE).svc.cluster.local:8888/"
+        # Database Connection
+        - name: SPRING_DATASOURCE_URL
+          value: "jdbc:mysql://mysql.$(K8S_NAMESPACE).svc.cluster.local:3306/petclinic"
+        # Database Credentials (from the Secrets we created earlier)
+        - name: SPRING_DATASOURCE_USERNAME
+          value: "petclinic"
+        - name: SPRING_DATASOURCE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secrets
+              key: user-pass
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: 8083
+          initialDelaySeconds: 60
+          timeoutSeconds: 5
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8083
+          initialDelaySeconds: 60
+          timeoutSeconds: 1
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        resources:
+          requests:
+           cpu: 100m
+           memory: 256Mi
+          limits:
+           cpu: 500m 
+           memory: 512Mi
+        imagePullPolicy: IfNotPresent
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: visits-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: visits-service
+  template:
+    metadata:
+      labels:
+        app: visits-service
+    spec:
+      initContainers:
+      - name: wait-for-mysql
+        image: busybox
+        env:
+        - name: K8S_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        command:
+          - sh
+          - -c 
+          - |
+            until nc -vz mysql.$(K8S_NAMESPACE).svc.cluster.local 3306; do
+              echo "Waiting for MySQL to be ready..."
+              sleep 5
+            done
+      containers:
+      - name: visits-service
+        image: dragan979/spring-petclinic-microservices-visits-service:v1
+        ports:
+        - containerPort: 8082
+        env:
+        - name: K8S_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace # This pulls the actual namespace name
+        - name: SPRING_PROFILES_ACTIVE
+          value: "docker,mysql"
+        - name: SPRING_CONFIG_IMPORT
+          value: "optional:configserver:http://config-server.$(K8S_NAMESPACE).svc.cluster.local:8888/"
+        # Database Connection
+        - name: SPRING_DATASOURCE_URL
+          value: "jdbc:mysql://mysql.$(K8S_NAMESPACE).svc.cluster.local:3306/petclinic"
+        # Database Credentials (from the Secrets we created earlier)
+        - name: SPRING_DATASOURCE_USERNAME
+          value: "petclinic"
+        - name: SPRING_DATASOURCE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secrets
+              key: user-pass
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: 8082
+          initialDelaySeconds: 60
+          timeoutSeconds: 5
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8082
+          initialDelaySeconds: 60
+          timeoutSeconds: 1
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        resources:
+          requests:
+           cpu: 100m
+           memory: 256Mi
+          limits:
+           cpu: 500m 
+           memory: 512Mi
+        imagePullPolicy: IfNotPresent
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: admin-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: admin-server
+  template:
+    metadata:
+      labels:
+        app: admin-server
+    spec:
+      containers:
+      - name: admin-server
+        image: dragan979/spring-petclinic-microservices-admin-server:v1
+        ports:
+        - containerPort: 9090
+        env:
+        - name: K8S_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace # This pulls the actual namespace name
+        - name: SPRING_CONFIG_IMPORT
+          value: "configserver:http://config-server.$(K8S_NAMESPACE).svc.cluster.local:8888"
+        - name: SPRING_PROFILES_ACTIVE
+          value: "docker"
+    
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: 9090
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 9090
+          initialDelaySeconds: 5
+          timeoutSeconds: 1
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        resources:
+          requests:
+           cpu: 100m
+           memory: 256Mi
+          limits:
+           cpu: 500m 
+           memory: 512Mi
+        imagePullPolicy: IfNotPresent

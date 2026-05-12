@@ -1,0 +1,90 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql # This name MUST match what's in your Config Server files
+spec:
+  selector:
+    app: mysql
+  ports:
+  - port: 3306
+    targetPort: 3306
+  clusterIP: None
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: config-server # This name MUST match what's in your Config Server files
+spec:
+  selector:
+    app: config-server
+  ports:
+  - port: 8888
+    targetPort: 8888
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway # This name MUST match what's in your Config Server files
+spec:
+  selector:
+    app: api-gateway
+  ports:
+  - port: 8080
+    targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: discovery-server # This name MUST match what's in your Config Server files
+spec:
+  selector:
+    app: discovery-server
+  ports:
+  - port: 8761
+    targetPort: 8761
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: customers-service # This name MUST match what's in your Config Server files
+spec:
+  selector:
+    app: customers-service
+  ports:
+  - port: 8081
+    targetPort: 8081
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vets-service # This name MUST match what's in your Config Server files
+spec:
+  selector:
+    app: vets-service
+  ports:
+  - port: 8083
+    targetPort: 8083
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: visits-service # This name MUST match what's in your Config Server files
+spec:
+  selector:
+    app: visits-service
+  ports:
+  - port: 8082
+    targetPort: 8082
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-server # This name MUST match what's in your Config Server files
+spec:
+  selector:
+    app: admin-server
+  ports:
+  - port: 9090
+    targetPort: 9090
