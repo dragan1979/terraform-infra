@@ -85,7 +85,7 @@ The platform is built on a modular hub-and-spoke networking model designed for s
 
 ##  Project Structure
 
-```text
+
 ├── .github/workflows/           # CI/CD Pipeline Definitions
 │   ├── terraform-plan-dev.yaml  # Security scan & Plan for Dev
 │   ├── terraform-apply-dev.yaml # Automated deployment to Dev
@@ -106,7 +106,7 @@ The platform is built on a modular hub-and-spoke networking model designed for s
 │       ├── vm/                  # CI/CD Runners & Jumpboxes
         |    | -- scripts/runner-bootstrap.yaml    # K8s addons (ArgoCD, Traefik, etc.)     
 │       └── bastion/             # Secure PaaS Management Access
-```
+
 
 ---
 
