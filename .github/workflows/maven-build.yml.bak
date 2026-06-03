@@ -1,0 +1,103 @@
+# This workflow will build a Java project with Maven, and cache/restore any dependencies to improve the workflow execution time
+# For more information see: https://help.github.com/actions/language-and-framework-guides/building-and-testing-java-with-maven
+
+name: Java CI with Maven
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+
+    runs-on: self-hosted
+    strategy:
+      matrix:
+        java: [ '17' ]
+        
+
+
+    steps:
+    - uses: actions/checkout@v5
+
+    - name: Generate Bot token
+      id: generate-token
+      uses: actions/create-github-app-token@v3
+      with:
+        app-id: ${{ secrets.APP_ID }}
+        private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+    - name: Set up JDK ${{matrix.java}}
+      uses: actions/setup-java@v5
+      with:
+        java-version: ${{matrix.java}}
+        distribution: 'adopt'
+        cache: maven
+    
+    - name: Configure Maven for Azure Artifacts
+      uses: s4u/maven-settings-action@v4.0.0
+      with:
+        # security and login details for Azure Artifacts
+        servers: |
+          [{
+            "id": "petclinic-feed",
+            "username": "draganvucanovic0858",
+            "password": "${{ secrets.AZURE_ARTIFACTS_PAT }}"
+          }]
+        # intercept and redirect traffic to Azure Artifacts
+        mirrors: |
+          [{
+            "id": "petclinic-feed",
+            "name": "Azure Artifacts Mirror",
+            "mirrorOf": "*",
+            "url": "https://pkgs.dev.azure.com/draganvucanovic0858/petclinic-devops/_packaging/petclinic-feed/maven/v1"
+          }]
+    
+    # - name: Compile Code
+    #   run: mvn -B package --file pom.xml
+
+    # # - name: Run Unit Tests
+    # #   run: mvn -B test --file pom.xml
+
+    - name: SonarCloud Analysis
+      # clean: Removes all previously compiled .class files to ensure a fresh analysis.
+      # verify: Runs all checks, including tests, to ensure code quality before analysis.
+      # By default, Maven fires the report off to SonarCloud and immediately says, "My job is done here!"
+      # By adding -Dsonar.qualitygate.wait=true, you are telling Maven: "Do not finish this step.
+      # Wait here until SonarCloud analyzes the report and gives you a definitive Pass or Fail."
+      # deploy: Maven goes through its entire lifecycle (compile -> test -> package -> verify) and then reaches the final stage: deploy
+      run: |
+        mvn -B clean deploy org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+          -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }} \
+          -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }} \
+          -Dsonar.host.url=https://sonarcloud.io \
+          -Dsonar.token=${{ secrets.SONAR_TOKEN }} \
+          -Dsonar.qualitygate.wait=true
+
+
+    # - name: Package JAR
+    #   run: mvn -B package -DskipTests --file pom.xml
+
+    - name: Build Docker Image
+      run: |
+          # Define the array of microservices
+          services=(
+            "admin-server" 
+            "api-gateway" 
+            "customers-service" 
+            "vets-service" 
+            "visits-service" 
+            "config-server" 
+            "discovery-server"
+          )
+
+          # Loop through them
+          for service in "${services[@]}"; do
+          # Build the image
+            docker build \
+              -t petclinicregistry.azurecr.io/$service:${{ github.sha }} \
+              --file ./spring-petclinic-$service/Dockerfile .
+          done
+        
