@@ -19,8 +19,7 @@ The platform is built on a modular, decoupled architecture designed for strict s
 ---
 
 ## Project Structure
-
-```text
+```
 ├── .github/workflows/                   # CI/CD Pipeline Definitions
 │   ├── terraform-core-plan-*.yaml       # Phase 1: Security scan & Plan for Core
 │   ├── terraform-core-apply-*.yaml      # Phase 1: Automated deployment for Core
