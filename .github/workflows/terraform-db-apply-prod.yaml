@@ -1,0 +1,147 @@
+name: 'Production Environment: Terraform Database Apply'
+on:
+  # THE AUTOMATIC CHAIN (Listens for Phase 1)
+  workflow_run:
+    workflows: ["Production Environment: Terraform Apply Infrastructure"] # <-- This MUST exactly match the 'name:' at the top of Phase 1 YAML
+    types:
+      - completed
+  push:
+    branches:
+      - prod
+    # Only trigger this pipeline if files in these specific folders change
+    paths:
+      - 'terraform/environments/prod/02-database/**'
+      - 'terraform/modules/**'
+    
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+ 
+
+env:
+  ARM_USE_OIDC: true
+  ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+jobs:
+  initiate-ephemeral-runner:
+    name: 'Apply Production'
+    runs-on: self-hosted
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+
+      - name: Azure Login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.ARM_CLIENT_ID }}
+          tenant-id: ${{ env.ARM_TENANT_ID }}
+          subscription-id: ${{ env.ARM_SUBSCRIPTION_ID }}
+
+      - name: Deploy ACI into snet-cicd
+        run: |
+          # Fetch the ACR password dynamically using secure OIDC login
+          ACR_PASSWORD=$(az acr credential show --name myregistry20260602 --query "passwords[0].value" -o tsv)
+
+          # 2. Inject the credentials into the container creation command
+          az container create \
+            --resource-group rg-core-network \
+            --name runner-petclinic-db${{ github.run_id }} \
+            --image myregistry20260602.azurecr.io/gh-tf-runner:latest \
+            --os-type Linux \
+            --cpu 1 \
+            --memory 1.5 \
+            --vnet vnet-hub \
+            --subnet snet-cicd \
+            --registry-login-server myregistry20260602.azurecr.io \
+            --registry-username myregistry20260602 \
+            --registry-password $ACR_PASSWORD \
+            --environment-variables \
+              GITHUB_REPOSITORY=$GITHUB_REPOSITORY \
+              GITHUB_TOKEN=${{ secrets.GH_PAT_FOR_RUNNER }} \
+              RUNNER_LABELS="ephemeral-db-runner" \
+            --restart-policy Never
+
+  # -------------------------------------------------------------
+  # THE EXECUTION (Runs inside the VNet on the new ACI)
+  # -------------------------------------------------------------
+  terraform-db-apply-prod:
+    name: 'Apply Database'
+    needs: initiate-ephemeral-runner
+    # This tells GitHub to wait for the ACI container to wake up!
+    runs-on: [self-hosted, ephemeral-db-runner] 
+    defaults:
+      run:
+        working-directory: ./terraform/environments/prod/02-database
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+
+      - name: Azure Login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.ARM_CLIENT_ID }}
+          tenant-id: ${{ env.ARM_TENANT_ID }}
+          subscription-id: ${{ env.ARM_SUBSCRIPTION_ID }}
+
+      # Build the infrastructure without asking for human input
+      - name: Terraform Init & Apply
+        run: |
+          terraform init -reconfigure
+          terraform apply -auto-approve -no-color > apply_output.txt
+      
+      - name: Generate Deployment Summary
+        if: always()
+        run: |
+          echo "## 🚀 Terraform Apply Results" >> $GITHUB_STEP_SUMMARY
+          echo "Status: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "### Apply Output" >> $GITHUB_STEP_SUMMARY
+          echo '```terraform' >> $GITHUB_STEP_SUMMARY
+          tail -n 20 apply_output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "[View Full Logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+
+      # If want to comment on the PR that was JUST merged
+      - name: Find Linked Pull Request
+        if: github.event_name == 'push'
+        uses: jwalton/gh-find-current-pr@v1
+        id: findPr
+        with:
+          state: closed
+
+      - name: Post Success Comment to Closed PR
+        if: steps.findPr.outputs.number && success()
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          number: ${{ steps.findPr.outputs.number }}
+          header: infra-ci
+          message: |
+            ✅ **Infrastructure Successfully Deployed to Production!**
+            The merge to `prod` has triggered a successful `terraform apply`.
+            [View Job Summary](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+  # -------------------------------------------------------------
+  # THE CLEANUP (Runs on the coordinator)
+  # -------------------------------------------------------------
+  teardown-runner:
+    name: 'Destroy ACI Runner'
+    needs: [initiate-ephemeral-runner, terraform-db-apply-prod]
+    if: always() # Ensures the container is deleted even if Terraform crashes
+    runs-on: self-hosted
+    steps:
+      - name: Azure Login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.ARM_CLIENT_ID }}
+          tenant-id: ${{ env.ARM_TENANT_ID }}
+          subscription-id: ${{ env.ARM_SUBSCRIPTION_ID }}
+
+      - name: Delete ACI Runner
+        run: az container delete --resource-group rg-core-network --name runner-petclinic-db${{ github.run_id }} --yes          
+  
