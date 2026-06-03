@@ -109,7 +109,7 @@ The platform is built on a modular hub-and-spoke networking model designed for s
 
 
 ---
-
+```
 ## Environment Specifications
 
 The infrastructure supports distinct configurations per environment to optimize for cost, performance, and strict state isolation.
@@ -235,3 +235,4 @@ Every Pull Request triggers an automated **Trivy IaC Scanner** check. It scans m
 ### Azure Bastion
 
 Provides secure, browser-based RDP/SSH access to internal virtual machines without requiring public IP addresses.
+```
