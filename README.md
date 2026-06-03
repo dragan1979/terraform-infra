@@ -113,7 +113,6 @@ The platform is built on a modular hub-and-spoke networking model designed for s
 
 ## Environment Specifications
 
-<<<<<<< HEAD
 The infrastructure supports distinct configurations per environment to optimize for cost, performance, and strict state isolation.
 
 | Feature | Dev Environment | Staging Environment | Prod Environment |
@@ -222,7 +221,6 @@ After the cluster is provisioned, the `runner-bootstrap` workflow installs core 
 
 ## Security Protocols
 
-<<<<<<< HEAD
 - **Trivy Scanning:** Every Pull Request triggers an automated Aquasecurity Trivy IaC Scanner check. It scans all Terraform files and modules for `CRITICAL` and `HIGH` vulnerabilities before any code is merged into `develop`, `staging`, or `prod`.
 - **Azure Bastion:** Provides secure, browser-based TLS access to internal jumpbox virtual machines without requiring open RDP/SSH ports or public IP addresses.
 - **Zero Hardcoded Secrets:** All sensitive values (PostgreSQL admin password, app user password) are generated and stored exclusively in Azure Key Vault. Phase 2 fetches them dynamically via `azurerm_key_vault_secret` data sources at plan time.
