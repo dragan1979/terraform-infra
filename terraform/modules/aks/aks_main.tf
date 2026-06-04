@@ -48,10 +48,11 @@ resource "azurerm_kubernetes_cluster" "aks" {
     tags = var.tags
 }
 
-# To attach Traefik Load Balancer, the AKS identity must have Network Contributor role on the subnet.
-# This allows AKS to create the necessary User Assigned NAT Gateway and assign it to the cluster for outbound traffic.  
+# To attach Traefik Load Balancer and to edit AKS security group, the AKS identity must have Network Contributor role on the subnet.
+# This allows AKS to create the necessary User Assigned NAT Gateway and assign it to the cluster for outbound traffic. 
+# This is needed so Azure CCM can create the necessary NSG rules to allow traffic to the Traefik Load Balancer.
 resource "azurerm_role_assignment" "aks_network_contributor" {
-  scope                = var.subnet_id
+  scope                = var.vnet_id
   role_definition_name = "Network Contributor"
   principal_id         = azurerm_kubernetes_cluster.aks.identity[0].principal_id
 }
