@@ -158,6 +158,7 @@ module "aks" {
   tags                = merge(local.common_tags, { "Project" = "infrastructure-hub" })
   vm_size             = "Standard_B2s_v2"
   node_count          = 2
+  vnet_id             = module.vnet.vnet_id
   depends_on          = [module.vnet, module.nat_gateway]
 }
 
