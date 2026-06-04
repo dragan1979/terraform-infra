@@ -255,7 +255,7 @@ resource "azurerm_role_assignment" "petclinic_kv_secrets_user" {
 # Azure needs to know who is allowed to access the "Petclinic Identity".
 # This resource tells Azure: "If a pod in the dev namespace of my AKS cluster is using the petclinic-sa service account, trust it, and hand it the tokens for this identity."
 resource "azurerm_federated_identity_credential" "petclinic_fic" {
-  name                = "fic-petclinic-dev"
+  name                = "fic-petclinic-prod"
   resource_group_name = azurerm_resource_group.aks_rg.name
   audience            = ["api://AzureADTokenExchange"]
 
