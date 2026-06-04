@@ -23,6 +23,10 @@ variable subnet_id {
   description = "The ID of the Subnet where the AKS Cluster should be deployed."
   type        = string
 }
+variable vnet_id {
+  type        = string
+  description = "The ID of the VNET"
+}
 
 variable tags {
   description = "A mapping of tags to assign to the resources"
