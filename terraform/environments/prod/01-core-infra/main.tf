@@ -232,7 +232,7 @@ module "postgres" {
 
 
 resource "azurerm_user_assigned_identity" "petclinic_identity" {
-  name                = "id-petclinic-dev"
+  name                = "id-petclinic-prod"
   location            = azurerm_resource_group.aks_rg.location
   resource_group_name = azurerm_resource_group.aks_rg.name
   tags                = local.common_tags
