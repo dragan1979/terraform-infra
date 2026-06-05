@@ -46,6 +46,42 @@ jobs:
       # Build the infrastructure without asking for human input
       - name: Terraform Apply
         run: terraform apply -auto-approve -no-color > apply_output.txt
+
+      - name: Get Terraform Output
+        id: tf-output
+        run: |
+          # Assuming you just ran 'terraform apply'
+          CLIENT_ID=$(terraform output -raw petclinic_identity_client_id)
+          echo "CLIENT_ID=$CLIENT_ID" >> $GITHUB_ENV
+
+      - name: Generate Cross-Repo Token
+        id: generate-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: dragan-actions-course
+          # Tightly scope the token to only access the GitOps repo
+          repositories: petclinic-gitops-repo
+
+      - name: Update GitOps Repository
+        run: |
+          # 1. Clone the Phase 2 repo using the generated App token
+          git clone https://x-access-token:${{ steps.generate-token.outputs.token }}@github.com/dragan-actions-course/petclinic-gitops-repo.git gitops-repo
+          
+          cd gitops-repo
+          
+          # 2. Swap out the placeholder in your kustomization.yaml file
+          sed -i "s/REPLACE_ME_CLIENT_ID/${{ env.CLIENT_ID }}/g" apps/petclinic/kustomization.yaml
+          
+          # 3. Configure the robotic Git user
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # 4. Commit and push the changes
+          git add apps/petclinic/kustomization.yaml
+          git commit -m "chore: update azure workload identity client-id from terraform"
+          git push origin main
       
       - name: Generate Deployment Summary
         if: always()
