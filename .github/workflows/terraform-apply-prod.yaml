@@ -24,7 +24,7 @@ jobs:
     defaults:
       run:
         # Force all commands to run exclusively inside the Prod deployment folder
-        working-directory: ./terraform/environments/prod
+        working-directory: ./terraform/environments/prod/01-core-infra
 
     steps:
       - name: Checkout Code
